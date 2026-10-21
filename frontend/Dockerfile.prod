@@ -6,7 +6,10 @@ ENV API_BASE_URL=$API_BASE_URL
 WORKDIR /app
 
 COPY frontend/package*.json ./
-RUN npm ci --no-audit --no-fund
+# Use `npm install` (not `npm ci`): the lockfile was generated with npm v11
+# (lockfileVersion 3) while this image ships npm v10, whose `npm ci` rejects
+# it as out of sync (Missing: cac, commander). `npm install` reconciles both.
+RUN npm install --no-audit --no-fund
 
 COPY backend/app/modules /module_layers
 
