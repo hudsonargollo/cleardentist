@@ -1,0 +1,90 @@
+# VPS deploy for cleardentist.clubemkt.digital
+# Built from source (local checkout + restored upstream files). Publishes
+# to host ports so the host nginx (172.17.0.1:<hostport> -> 127.0.0.1) can
+# proxy. Ports chosen to avoid existing apps on this host:
+#   citasya=8085, mulacargo=8086, pontal=4174, operus=8094, cal=3400.
+#   db=5432 is taken by cal_db/infra-postgres, so use 5434.
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dental_clinic}
+      POSTGRES_USER: ${POSTGRES_USER:-dental}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "5434:5432"
+    volumes:
+      - cleardentist_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dental} -d ${POSTGRES_DB:-dental_clinic}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-dental}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-dental_clinic}
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      BUDGET_PUBLIC_SECRET_KEY: ${BUDGET_PUBLIC_SECRET_KEY:?Set BUDGET_PUBLIC_SECRET_KEY in .env}
+      AGENDA_PUBLIC_SECRET_KEY: ${AGENDA_PUBLIC_SECRET_KEY:?Set AGENDA_PUBLIC_SECRET_KEY in .env}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1,::1,172.16.0.0/12,192.168.0.0/16}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-console}
+      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
+      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-noreply@cleardentist.com}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-ClearDentist}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      STORAGE_BACKEND: local
+      STORAGE_LOCAL_PATH: /app/storage
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SEED_ON_STARTUP: ${SEED_ON_STARTUP:-1}
+      SEED_LANG: ${SEED_LANG:-es}
+    ports:
+      - "8001:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - cleardentist_storage:/app/storage
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=2).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.prod
+      args:
+        API_BASE_URL: http://172.17.0.1:8001
+    environment:
+      NUXT_PUBLIC_API_BASE_URL: https://cleardentist.clubemkt.digital
+      API_BASE_URL_SERVER: http://backend:8000
+      NUXT_PUBLIC_DEMO_MODE: ${SEED_ON_STARTUP:-1}
+      NUXT_CSP_MODE: ${NUXT_CSP_MODE:-off}
+    depends_on:
+      backend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+
+volumes:
+  cleardentist_pgdata:
+  cleardentist_storage:
