@@ -69,7 +69,18 @@ class AgendaModule(BaseModule):
         ]
 
     def get_router(self) -> APIRouter:
-        return router
+        from .public_router import public_router
+
+        # Staff router (appointments, cabinets, staff booking-token mgmt)
+        # plus the public, token-gated self-scheduling surface
+        # (meta / availability / book). Mounted under ``/api/v1/agenda``
+        # so public routes resolve at ``/api/v1/agenda/public/schedule``.
+        from .router import router as staff_router
+
+        combined = APIRouter()
+        combined.include_router(staff_router)
+        combined.include_router(public_router)
+        return combined
 
     def get_permissions(self) -> list[str]:
         return [
